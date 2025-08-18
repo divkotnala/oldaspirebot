@@ -33,6 +33,11 @@ scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 creds_dict = json.loads(GOOGLE_CREDS_JSON)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
+
+# IMPROVED: Re-authenticate if credentials have expired to prevent stale sessions
+if creds.access_token_expired:
+    client.login()
+
 doubts_sheet = client.open_by_key(SHEET_ID).worksheet("Doubts")
 users_sheet = client.open_by_key(SHEET_ID).worksheet("Users")
 blacklist_sheet = client.open_by_key(SHEET_ID).worksheet("Blacklisted")
@@ -115,16 +120,24 @@ async def signup_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return SIGNUP_PHONE
 
 async def signup_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handles phone number during signup, checking if it already exists."""
     phone = update.message.text.strip()
-    # Check if phone number already exists
+    
+    # FIXED: Explicitly check the result of .find()
     try:
-        users_sheet.find(phone, in_column=1)
-        await update.message.reply_text("This phone number is already registered. Please try logging in instead. Use /start to begin.")
-        return ConversationHandler.END
+        cell = users_sheet.find(phone, in_column=1)
+        if cell: # If a cell is found, the user exists
+            await update.message.reply_text("This phone number is already registered. Please log in instead using /start.")
+            return ConversationHandler.END
     except gspread.exceptions.CellNotFound:
-        context.user_data['signup_phone'] = phone
-        await update.message.reply_text("Thanks. Which class are you in?")
-        return SIGNUP_CLASS
+        # This is the correct path for a new user, so we just continue
+        pass
+    
+    # If we reach here, the number is new
+    context.user_data['signup_phone'] = phone
+    await update.message.reply_text("Thanks. Which class are you in?")
+    return SIGNUP_CLASS
+
 
 async def signup_class(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['signup_class'] = update.message.text.strip()
@@ -198,6 +211,7 @@ async def signup_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 # --- Login Handlers ---
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handles phone number during login."""
     phone = update.message.text.strip()
     
     # Check if blacklisted first
@@ -205,15 +219,22 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("Sorry, your plan has expired. Please recharge to continue services.")
         return ConversationHandler.END
         
+    # FIXED: Explicitly check the result of .find()
     try:
-        user_row = users_sheet.find(phone, in_column=1).row
-        user_data = users_sheet.row_values(user_row)
+        cell = users_sheet.find(phone, in_column=1)
+        if not cell:
+            # This handles the case where .find() returns None
+            raise gspread.exceptions.CellNotFound
+
+        user_data = users_sheet.row_values(cell.row)
         context.user_data['login_data'] = user_data
         await update.message.reply_text("Phone number found. Please enter your 4-digit PIN:")
         return LOGIN_PIN
+
     except gspread.exceptions.CellNotFound:
         await update.message.reply_text("This phone number is not registered. Please sign up first using /start.")
         return ConversationHandler.END
+
 
 async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pin = update.message.text.strip()
@@ -235,13 +256,19 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_user_blacklisted(update, context):
         return # Stop processing if user is blacklisted
 
-    phone = context.user_data['phone']
+    phone = context.user_data.get('phone')
+    if not phone:
+        await update.message.reply_text("An error occurred. Please log in again with /start.")
+        return
+
     try:
-        user_row = users_sheet.find(phone, in_column=1).row
-        user_data = users_sheet.row_values(user_row)
+        cell = users_sheet.find(phone, in_column=1)
+        if not cell:
+            raise gspread.exceptions.CellNotFound
+        user_data = users_sheet.row_values(cell.row)
         name = user_data[2] # Name is in the 3rd column (index 2)
     except gspread.exceptions.CellNotFound:
-        await update.message.reply_text("An error occurred. Please try logging in again with /start.")
+        await update.message.reply_text("An error occurred with your account. Please try logging in again with /start.")
         return
 
     user_id = update.message.from_user.id
