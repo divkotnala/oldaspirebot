@@ -19,10 +19,13 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 
 # ========================== CONFIG ==========================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON") 
+# UPDATED: Renamed BOT_TOKEN to TOKEN for clarity
+TOKEN = os.environ.get("TOKEN")
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON")
+# NEW: Get the WEBAPP_URL you will set in Railway
+WEBAPP_URL = os.environ.get("WEBAPP_URL")
 
-approved_numbers = ["7217684362", "9625060017", "9798393702","9354197496"]
+approved_numbers = ["7217684362", "9625060017", "9798393702", "9354197496"]
 
 SHEET_ID = "1RicQuJRGK5ZmlVZGGRZmU-mEtbYx_4kmzzsLPcgdyFE"
 DRIVE_FOLDER_ID = "14bDZ23j2jhXLWs_XxFb3xnOr-8GPlQhj"
@@ -44,102 +47,119 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-user_phone_numbers = {}
-user_names = {}
+# REMOVED: Global dictionaries for user data are unreliable on Railway
+# user_phone_numbers = {}
+# user_names = {}
 
 ASK_NAME, ASK_PHONE, WAITING_FOR_DOUBT = range(3)
 
-# Welcome message
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation and asks for the user's name."""
     await update.message.reply_text(
         "Welcome to AspireSetGo Doubt Solving Portal! 🙏\n\n"
-        "To get started, please {provide your name}. This is required for registration."
-
+        "To get started, please provide your name. This is required for registration."
     )
     return ASK_NAME
 
-# Ask for the user's name
-async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the name in context and asks for the phone number."""
     user_name = update.message.text.strip()
-    user_names[update.message.from_user.id] = user_name
+    # UPDATED: Use context.user_data to store data for this specific user
+    context.user_data['name'] = user_name
     await update.message.reply_text(
-        "Thank you, {0}! Now, please send your **registered phone number** to continue. "
-        "Don't share your phone number with others as it is the key to start conversations. "
-        "If others have it, they can access your account and you may get banned.".format(user_name)
+        f"Thank you, {user_name}! Now, please send your **registered phone number** to continue. "
+        "This is your key to start conversations, so don't share it."
     )
     return ASK_PHONE
 
-# Phone number handler
-async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Verifies the phone number and stores it in context."""
     phone = update.message.text.strip()
+    # UPDATED: Retrieve name from context.user_data
+    name = context.user_data.get('name', 'N/A')
 
     if phone in approved_numbers:
-        user_phone_numbers[update.message.from_user.id] = phone
-        # Add the user's name and phone number to the spreadsheet
-        name = user_names[update.message.from_user.id]
+        # UPDATED: Store phone number and verification status in context
+        context.user_data['phone'] = phone
+        context.user_data['is_verified'] = True
+        
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet.append_row([now, name, phone, str(update.message.from_user.id), "-", "Verified"])
-        await update.message.reply_text("✅ Verified! Now whenever you want to post any doubt just simply send Image/text to us. Now send your doubt as text or image.\n**If you don't get confirmation your doubt is recorded then try restarting the bot by /start**")
+        # FIXED: Standardized sheet columns
+        sheet.append_row([now, name, phone, str(update.message.from_user.id), "-", "-", "Verified"])
+        
+        await update.message.reply_text(
+            "✅ Verified! You can now send your doubts as text or images.\n\n"
+            "If you don't get a confirmation, try restarting with /start"
+        )
         return WAITING_FOR_DOUBT
     else:
-        await update.message.reply_text("❌ Your number is not authorized. Contact admin or Restart the bot by /start command \nNeed any help call 📞 9625060017")
+        await update.message.reply_text(
+            "❌ Your number is not authorized. Contact an admin or restart with /start.\n"
+            "Need help? Call 📞 9625060017"
+        )
         return ConversationHandler.END
 
-# Handle text doubts
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+def is_user_verified(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Helper function to check if a user is verified via context data."""
+    return context.user_data.get('is_verified', False)
 
-    if user_id not in user_phone_numbers:
-        await update.message.reply_text("❗ Please verify your phone number first by /start")
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles text doubts from verified users."""
+    if not is_user_verified(context):
+        await update.message.reply_text("❗ Please verify your phone number first using /start.")
         return
 
     text_doubt = update.message.text
-    phone = user_phone_numbers[user_id]
-    name = user_names[user_id]
-
+    phone = context.user_data['phone']
+    name = context.user_data['name']
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([now, name, phone, str(user_id), text_doubt, "Pending"])
+    
+    # FIXED: Standardized sheet columns (Text Doubt, Drive Link, Status)
+    sheet.append_row([now, name, phone, str(update.message.from_user.id), text_doubt, "-", "Pending"])
+    await update.message.reply_text("✅ Your text doubt has been recorded! We'll get back to you soon.")
 
-    await update.message.reply_text("✅ Your text doubt has been recorded! We will get back soon.")
-
-# Handle image doubts
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-
-    if user_id not in user_phone_numbers:
-        await update.message.reply_text("❗ Please verify your phone number first by restarting the bot by /start command.")
+    """Handles image doubts from verified users."""
+    if not is_user_verified(context):
+        await update.message.reply_text("❗ Please verify your phone number first using /start.")
         return
 
     photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+        await file.download_to_drive(custom_path=temp_file.name)
+        
+        gfile = drive.CreateFile({
+            'parents': [{'id': DRIVE_FOLDER_ID}], 'title': os.path.basename(temp_file.name)
+        })
+        gfile.SetContentFile(temp_file.name)
+        gfile.Upload()
+        drive_link = f"https://drive.google.com/uc?id={gfile['id']}"
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False)
-    temp_file_name = temp_file.name
-    await file.download_to_drive(custom_path=temp_file_name)
+    os.unlink(temp_file.name)
 
-    gfile = drive.CreateFile({'parents': [{'id': DRIVE_FOLDER_ID}], 'title': os.path.basename(temp_file_name)})
-    gfile.SetContentFile(temp_file_name)
-    gfile.Upload()
-    drive_link = f"https://drive.google.com/uc?id={gfile['id']}"
-
-    phone = user_phone_numbers[user_id]
-    name = user_names[user_id]
+    phone = context.user_data['phone']
+    name = context.user_data['name']
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([now, name, phone, str(user_id), "-", drive_link, "Pending"])
-    await update.message.reply_text("✅ Your Image doubt has been recorded! We will get back soon.")
 
-    temp_file.close()
-    os.unlink(temp_file_name)
+    # FIXED: Standardized sheet columns for consistency
+    sheet.append_row([now, name, phone, str(update.message.from_user.id), "-", drive_link, "Pending"])
+    
+    # FIXED: Removed duplicate reply message
+    await update.message.reply_text("✅ Your image doubt has been recorded! We'll get back to you soon.")
 
-    await update.message.reply_text("✅ Your image doubt has been recorded! We will get back soon.")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """NEW: Allows users to cancel the registration process."""
+    await update.message.reply_text("Registration cancelled. You can start again with /start.")
+    return ConversationHandler.END
 
-# Unknown messages
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles any commands that are not recognized."""
     await update.message.reply_text("❗ Sorry, I don't understand that command.")
 
-# Main function
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
@@ -151,23 +171,19 @@ if __name__ == "__main__":
                 MessageHandler(filters.PHOTO, handle_photo)
             ]
         },
-        fallbacks=[],
+        fallbacks=[CommandHandler('cancel', cancel)], # NEW: Added a cancel fallback for better UX
     )
 
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
     
-    # Railway provides the PORT environment variable for web applications.
-    PORT = int(os.environ.get('PORT', 8443))
+    # --- Webhook Setup for Railway ---
+    PORT = int(os.environ.get('PORT', 8080))
     
-    # This is a made-up URL for now. Railway will provide the real one.
-    # We will set it later via a bot command.
-    HEROKU_APP_NAME = os.environ.get("RAILWAY_STATIC_URL") # Railway provides this
-    
-    # Start the bot
+    # FIXED: Using the correct variable names for the webhook URL
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{HEROKU_APP_NAME}/{BOT_TOKEN}"
+        url_path=TOKEN,
+        webhook_url=f"https://{WEBAPP_URL}/{TOKEN}"
     )
