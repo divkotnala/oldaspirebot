@@ -77,7 +77,7 @@ async def is_user_blacklisted(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not phone:
         return True
     if phone in get_blacklist(context):
-        await update.message.reply_text("Sorry, your plan has expired. Please recharge to continue services.")
+        await update.message.reply_text("Oops! Your access to unlimited doubt-solving has ended. To keep getting those tricky questions answered in a snap, please top up your plan. Click on the link below to recharge:\n\n https://pages.razorpay.com/stores/st_QNHI3mHvLWmx9D")
         context.user_data.clear()
         return True
     return False
@@ -89,7 +89,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if await is_user_blacklisted(update, context):
             pass
         else:
-            await update.message.reply_text("Welcome back! You are still logged in. You can send your doubts now.")
+            await update.message.reply_text("Great to see you again! You're still logged in. Let's crush those doubts and keep your preparation on track.\n What's your question?")
             return LOGGED_IN
 
     keyboard = [[InlineKeyboardButton("✅ Login", callback_data='login')], [InlineKeyboardButton("✍️ Signup", callback_data='signup')]]
