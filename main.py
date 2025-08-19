@@ -12,6 +12,7 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     CallbackQueryHandler,
+    PicklePersistence, # NEW: Import for session persistence
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -75,21 +76,36 @@ async def is_user_blacklisted(update: Update, context: ContextTypes.DEFAULT_TYPE
         return True
     if phone in get_blacklist(context):
         await update.message.reply_text("Sorry, your plan has expired. Please recharge to continue services.")
+        # NEW: Clear the user's session if they are blacklisted
+        context.user_data.clear()
         return True
     return False
 
 # ========================== AUTHENTICATION FLOW ==========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Greets user and offers Login / Signup options."""
-    # This function is now also called after signup to loop back
+    """
+    Greets user. If already logged in, proceeds to doubt submission. 
+    Otherwise, offers Login/Signup options.
+    """
+    # FEATURE 2: Check for a persistent session
+    if context.user_data.get('phone'):
+        if await is_user_blacklisted(update, context):
+            # If blacklisted, the above function handles the message and clears data.
+            # We need to show the login/signup menu again.
+            pass # Fall through to show the menu
+        else:
+            await update.message.reply_text("Welcome back! You are still logged in. You can send your doubts now.")
+            return LOGGED_IN
+
+    # If not logged in or was just blacklisted, show the main menu.
     keyboard = [
         [InlineKeyboardButton("✅ Login", callback_data='login')],
         [InlineKeyboardButton("✍️ Signup", callback_data='signup')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Check if the message is from a command or a callback query
+    # Check if we need to edit a message (from a callback) or send a new one
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "Welcome! Please log in or sign up to continue:",
@@ -112,7 +128,6 @@ async def auth_decision_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("Great! Let's get you signed up. What is your full name?")
         return SIGNUP_NAME
 
-# --- Signup Handlers ---
 async def signup_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['signup_name'] = update.message.text.strip()
     await update.message.reply_text("Got it. Now, please enter your phone number:")
@@ -163,7 +178,6 @@ async def signup_exams_callback(update: Update, context: ContextTypes.DEFAULT_TY
     return SIGNUP_EXAMS
 
 async def signup_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the final step of signup and loops back to the start."""
     pin = update.message.text.strip()
     if not (pin.isdigit() and len(pin) == 4):
         await update.message.reply_text("Invalid PIN. Please enter a 4-digit number.")
@@ -171,24 +185,12 @@ async def signup_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_data = context.user_data
     timestamp = datetime.datetime.now().isoformat()
     exams_str = ", ".join(sorted(list(user_data['selected_exams'])))
-    new_row = [
-        user_data['signup_phone'],
-        str(update.message.from_user.id),
-        user_data['signup_name'],
-        user_data['signup_class'],
-        exams_str,
-        pin,
-        timestamp
-    ]
+    new_row = [ user_data['signup_phone'], str(update.message.from_user.id), user_data['signup_name'], user_data['signup_class'], exams_str, pin, timestamp ]
     users_sheet.append_row(new_row)
     context.user_data.clear()
-    
-    # FEATURE 1: Loop back to the start menu after signup
     await update.message.reply_text("🎉 Signup successful! Please now log in to continue.")
     return await start(update, context)
 
-
-# --- Login Handlers ---
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     phone = update.message.text.strip()
     if phone in get_blacklist(context):
@@ -205,17 +207,18 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     except gspread.exceptions.CellNotFound:
         await update.message.reply_text("This phone number is not registered. Please sign up first using /start.")
         return ConversationHandler.END
+    except gspread.exceptions.GSpreadException as e:
+        logging.error(f"A Google Sheets API error occurred during login for phone {phone}: {e}")
+        await update.message.reply_text("Sorry, there was a problem connecting to our database. Please try again in a few moments.")
+        return ConversationHandler.END
 
 async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pin = update.message.text.strip()
     user_data_row = context.user_data['login_data']
     correct_pin = user_data_row[5]
-    
     if pin == correct_pin:
-        # FEATURE 2: Verify that the Telegram ID matches the one from registration
         stored_telegram_id = user_data_row[1]
         current_telegram_id = str(update.message.from_user.id)
-        
         if stored_telegram_id == current_telegram_id:
             phone_number = user_data_row[0]
             context.user_data.clear()
@@ -226,9 +229,8 @@ async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text("❌ Access Denied. This phone number is registered to a different Telegram account.")
             return ConversationHandler.END
     else:
-        # FEATURE 3: Options for incorrect PIN
         await update.message.reply_text("Incorrect PIN. Please try the PIN again, or use /cancel to start over.")
-        return LOGIN_PIN # Loop back to let the user try the PIN again
+        return LOGIN_PIN
 
 # ========================== MAIN BOT FUNCTIONALITY ==========================
 async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,10 +253,10 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text_doubt = "-"
     drive_link = "-"
-    if update.message.text:
-        text_doubt = update.message.text
-        await update.message.reply_text("✅ Your text doubt has been recorded!")
-    elif update.message.photo:
+    
+    if update.message.photo:
+        # FEATURE 1: Check for caption on photos
+        text_doubt = update.message.caption or "-" # Use caption if it exists, otherwise default to "-"
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
@@ -265,7 +267,19 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             drive_link = f"https://drive.google.com/uc?id={gfile['id']}"
         os.unlink(temp_file.name)
         await update.message.reply_text("✅ Your image doubt has been recorded!")
+
+    elif update.message.text:
+        text_doubt = update.message.text
+        await update.message.reply_text("✅ Your text doubt has been recorded!")
+
     doubts_sheet.append_row([now, name, phone, str(user_id), text_doubt, drive_link, "Pending"])
+
+async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """NEW: Logs the user out and clears their session data."""
+    context.user_data.clear()
+    await update.message.reply_text("You have been successfully logged out. Use /start to log in again.")
+    # Fall back to the main menu
+    return await start(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -273,7 +287,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+    # FEATURE 2: Create a persistence object to save session data
+    persistence = PicklePersistence(filepath="bot_session_data.pickle")
+
+    # FEATURE 2: Add persistence to the ApplicationBuilder
+    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -285,12 +304,17 @@ if __name__ == "__main__":
             SIGNUP_CLASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, signup_class)],
             SIGNUP_EXAMS: [CallbackQueryHandler(signup_exams_callback)],
             SIGNUP_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, signup_pin)],
-            LOGGED_IN: [MessageHandler(filters.TEXT | filters.PHOTO, handle_doubt)],
+            LOGGED_IN: [
+                CommandHandler('logout', logout), # NEW: Allow logout when logged in
+                MessageHandler(filters.TEXT | filters.PHOTO, handle_doubt)
+            ],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', start)],
         per_message=False
     )
+    
     app.add_handler(conv_handler)
+    
     PORT = int(os.environ.get('PORT', 8080))
     app.run_webhook(
         listen="0.0.0.0",
