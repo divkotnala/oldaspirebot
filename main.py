@@ -95,9 +95,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [[InlineKeyboardButton("✅ Login", callback_data='login')], [InlineKeyboardButton("✍️ Signup", callback_data='signup')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
-        await update.callback_query.edit_message_text("Welcome!\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text("Welcome!\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017 \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Welcome! \nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
+        await update.message.reply_text("Welcome! \nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017 \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     return AUTH_DECISION
 
 async def auth_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -188,11 +188,11 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return LOGIN_PIN
     except gspread.exceptions.CellNotFound:
         # MODIFIED: Loop back to the start menu instead of just ending the conversation.
-        await update.message.reply_text("This number is not registered. Please use /start to sign up.")
+        await update.message.reply_text("This number is not registered. Please use /start to sign up.\nHelpline 📞: 9625060017")
         return await start(update, context)
     except gspread.exceptions.GSpreadException as e:
         logging.error(f"A Google Sheets API error occurred during login for phone {phone}: {e}")
-        await update.message.reply_text("Sorry, there was a problem connecting to our database. Please try again in a few moments.")
+        await update.message.reply_text("Sorry, there was a problem connecting to our database. Please try again in a few moments.\nHelpline 📞: 9625060017")
         return ConversationHandler.END
 
 async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -209,7 +209,7 @@ async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text("✅ Login successful! You can now send your doubts.")
             return LOGGED_IN
         else:
-            await update.message.reply_text("❌ Access Denied. This phone number is registered to a different Telegram account.")
+            await update.message.reply_text("❌ Access Denied. This phone number is registered to a different Telegram account.\nHelpline 📞: 9625060017")
             return ConversationHandler.END
     else:
         await update.message.reply_text("Incorrect PIN. Please try the PIN again, or use /cancel to start over.")
@@ -220,7 +220,7 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     phone = context.user_data.get('phone')
     if not phone:
-        await update.message.reply_text("An error occurred. Please log in again with /start.")
+        await update.message.reply_text("An error occurred. Please log in again with /start.\nHelpline 📞: 9625060017")
         return
     try:
         cell = users_sheet.find(phone, in_column=1)
@@ -229,7 +229,7 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data = users_sheet.row_values(cell.row)
         name = user_data[2]
     except gspread.exceptions.CellNotFound:
-        await update.message.reply_text("An error occurred with your account. Please try logging in again with /start.")
+        await update.message.reply_text("An error occurred with your account. Please try logging in again with /start.\nHelpline 📞: 9625060017")
         return
     user_id = update.message.from_user.id
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -259,7 +259,7 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    await update.message.reply_text("Process cancelled. Use /start to begin again.")
+    await update.message.reply_text("Process cancelled. Use /start to begin again.\nHelpline 📞: 9625060017")
     return ConversationHandler.END
 
 async def notify_users_on_restart(app: Application):
