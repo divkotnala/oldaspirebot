@@ -233,6 +233,11 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.message.from_user.id
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # ==================== NEW LINE ADDED ====================
+    # Create the WhatsApp link by adding '91' to the phone number.
+    whatsapp_link = f"https://wa.me/91{phone}"
+    # ========================================================
     text_doubt = "-"
     drive_link = "-"
     if update.message.photo:
@@ -250,7 +255,7 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.text:
         text_doubt = update.message.text
         await update.message.reply_text("✅ Your text doubt has been recorded!")
-    doubts_sheet.append_row([now, name, phone, str(user_id), text_doubt, drive_link, "Pending"])
+    doubts_sheet.append_row([now, name, phone, str(user_id), text_doubt, drive_link, "Pending", whatsapp_link])
 
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
