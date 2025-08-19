@@ -3,6 +3,7 @@ import os
 import datetime
 import tempfile
 import json
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,7 +13,8 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     CallbackQueryHandler,
-    PicklePersistence, # NEW: Import for session persistence
+    PicklePersistence,
+    Application
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -76,7 +78,6 @@ async def is_user_blacklisted(update: Update, context: ContextTypes.DEFAULT_TYPE
         return True
     if phone in get_blacklist(context):
         await update.message.reply_text("Sorry, your plan has expired. Please recharge to continue services.")
-        # NEW: Clear the user's session if they are blacklisted
         context.user_data.clear()
         return True
     return False
@@ -84,38 +85,19 @@ async def is_user_blacklisted(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ========================== AUTHENTICATION FLOW ==========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Greets user. If already logged in, proceeds to doubt submission. 
-    Otherwise, offers Login/Signup options.
-    """
-    # FEATURE 2: Check for a persistent session
     if context.user_data.get('phone'):
         if await is_user_blacklisted(update, context):
-            # If blacklisted, the above function handles the message and clears data.
-            # We need to show the login/signup menu again.
-            pass # Fall through to show the menu
+            pass
         else:
             await update.message.reply_text("Welcome back! You are still logged in. You can send your doubts now.")
             return LOGGED_IN
 
-    # If not logged in or was just blacklisted, show the main menu.
-    keyboard = [
-        [InlineKeyboardButton("✅ Login", callback_data='login')],
-        [InlineKeyboardButton("✍️ Signup", callback_data='signup')],
-    ]
+    keyboard = [[InlineKeyboardButton("✅ Login", callback_data='login')], [InlineKeyboardButton("✍️ Signup", callback_data='signup')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Check if we need to edit a message (from a callback) or send a new one
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "Welcome! Please log in or sign up to continue:",
-            reply_markup=reply_markup
-        )
+        await update.callback_query.edit_message_text("Welcome! Please log in or sign up to continue:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text(
-            "Welcome! Please log in or sign up to continue:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Welcome! Please log in or sign up to continue:", reply_markup=reply_markup)
     return AUTH_DECISION
 
 async def auth_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -205,8 +187,9 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("Phone number found. Please enter your 4-digit PIN:")
         return LOGIN_PIN
     except gspread.exceptions.CellNotFound:
-        await update.message.reply_text("This phone number is not registered. Please sign up first using /start.")
-        return ConversationHandler.END
+        # MODIFIED: Loop back to the start menu instead of just ending the conversation.
+        await update.message.reply_text("This number is not registered. Please use /start to sign up.")
+        return await start(update, context)
     except gspread.exceptions.GSpreadException as e:
         logging.error(f"A Google Sheets API error occurred during login for phone {phone}: {e}")
         await update.message.reply_text("Sorry, there was a problem connecting to our database. Please try again in a few moments.")
@@ -232,7 +215,6 @@ async def login_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("Incorrect PIN. Please try the PIN again, or use /cancel to start over.")
         return LOGIN_PIN
 
-# ========================== MAIN BOT FUNCTIONALITY ==========================
 async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_user_blacklisted(update, context):
         return
@@ -253,10 +235,8 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text_doubt = "-"
     drive_link = "-"
-    
     if update.message.photo:
-        # FEATURE 1: Check for caption on photos
-        text_doubt = update.message.caption or "-" # Use caption if it exists, otherwise default to "-"
+        text_doubt = update.message.caption or "-"
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
@@ -267,18 +247,14 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             drive_link = f"https://drive.google.com/uc?id={gfile['id']}"
         os.unlink(temp_file.name)
         await update.message.reply_text("✅ Your image doubt has been recorded!")
-
     elif update.message.text:
         text_doubt = update.message.text
         await update.message.reply_text("✅ Your text doubt has been recorded!")
-
     doubts_sheet.append_row([now, name, phone, str(user_id), text_doubt, drive_link, "Pending"])
 
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """NEW: Logs the user out and clears their session data."""
     context.user_data.clear()
     await update.message.reply_text("You have been successfully logged out. Use /start to log in again.")
-    # Fall back to the main menu
     return await start(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -286,13 +262,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Process cancelled. Use /start to begin again.")
     return ConversationHandler.END
 
+async def notify_users_on_restart(app: Application):
+    logging.info("Checking for logged-in users to notify about restart...")
+    for user_id, user_data in list(app.user_data.items()):
+        if user_data.get('phone'):
+            try:
+                await app.bot.send_message(
+                    chat_id=user_id,
+                    text="Server has been restarted. Please use /start to continue asking doubts."
+                )
+                logging.info(f"Sent restart notification to user {user_id}")
+            except Exception as e:
+                logging.warning(f"Could not send restart notification to user {user_id}: {e}")
+
 if __name__ == "__main__":
-    # FEATURE 2: Create a persistence object to save session data
     persistence = PicklePersistence(filepath="bot_session_data.pickle")
-
-    # FEATURE 2: Add persistence to the ApplicationBuilder
     app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
-
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -305,16 +290,15 @@ if __name__ == "__main__":
             SIGNUP_EXAMS: [CallbackQueryHandler(signup_exams_callback)],
             SIGNUP_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, signup_pin)],
             LOGGED_IN: [
-                CommandHandler('logout', logout), # NEW: Allow logout when logged in
+                CommandHandler('logout', logout),
                 MessageHandler(filters.TEXT | filters.PHOTO, handle_doubt)
             ],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', start)],
         per_message=False
     )
-    
     app.add_handler(conv_handler)
-    
+    asyncio.run(notify_users_on_restart(app))
     PORT = int(os.environ.get('PORT', 8080))
     app.run_webhook(
         listen="0.0.0.0",
