@@ -89,15 +89,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if await is_user_blacklisted(update, context):
             pass
         else:
-            await update.message.reply_text("Great to see you again! You're still logged in. Let's crush those doubts and keep your preparation on track.\n What's your question?")
+            await update.message.reply_text("Great to see you again! You're still logged in. Let's crush those doubts and keep your preparation on track.\n\nWhat's your question?")
             return LOGGED_IN
 
     keyboard = [[InlineKeyboardButton("✅ Login", callback_data='login')], [InlineKeyboardButton("✍️ Signup", callback_data='signup')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
-        await update.callback_query.edit_message_text("Welcome! Please log in or sign up to continue:", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text("Welcome!\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Welcome! Please log in or sign up to continue:", reply_markup=reply_markup)
+        await update.message.reply_text("Welcome! \nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     return AUTH_DECISION
 
 async def auth_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -134,7 +134,7 @@ async def signup_class(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     keyboard = [[InlineKeyboardButton(exam, callback_data=f"exam_{exam}")] for exam in EXAM_OPTIONS]
     keyboard.append([InlineKeyboardButton("➡️ Done", callback_data="exam_done")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Which exam(s) are you preparing for? (Select multiple then press Done)", reply_markup=reply_markup)
+    await update.message.reply_text("Which exam(s) are you preparing for?\nSelect (multiple options) then press Done", reply_markup=reply_markup)
     return SIGNUP_EXAMS
 
 async def signup_exams_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -176,7 +176,7 @@ async def signup_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     phone = update.message.text.strip()
     if phone in get_blacklist(context):
-        await update.message.reply_text("Sorry, your plan has expired. Please recharge to continue services.")
+        await update.message.reply_text("Oops! Your access to unlimited doubt-solving has ended. To keep getting those tricky questions answered in a snap, please top up your plan. Click on the link below to recharge:\n\n https://pages.razorpay.com/stores/st_QNHI3mHvLWmx9D")
         return ConversationHandler.END
     try:
         cell = users_sheet.find(phone, in_column=1)
@@ -269,7 +269,7 @@ async def notify_users_on_restart(app: Application):
             try:
                 await app.bot.send_message(
                     chat_id=user_id,
-                    text="Server has been restarted. Please use /start to continue asking doubts."
+                    text="Server has been restarted. Please use  /start to continue asking doubts."
                 )
                 logging.info(f"Sent restart notification to user {user_id}")
             except Exception as e:
