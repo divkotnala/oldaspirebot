@@ -277,7 +277,7 @@ async def notify_users_on_restart(app: Application):
 
 if __name__ == "__main__":
     persistence = PicklePersistence(filepath="bot_session_data.pickle")
-    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
+    app = ApplicationBuilder().token(TOKEN).persistence(persistence).post_init(notify_users_on_restart).build()
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -298,7 +298,6 @@ if __name__ == "__main__":
         per_message=False
     )
     app.add_handler(conv_handler)
-    asyncio.run(notify_users_on_restart(app))
     PORT = int(os.environ.get('PORT', 8080))
     app.run_webhook(
         listen="0.0.0.0",
