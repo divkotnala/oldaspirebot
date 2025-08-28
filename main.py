@@ -95,16 +95,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [[InlineKeyboardButton("✅ Login", callback_data='login')], [InlineKeyboardButton("✍️ Signup", callback_data='signup')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
-        await update.callback_query.edit_message_text("Welcome!\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017 \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text("Welcome!\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017\n\nFor payment after free trial ends use this link (Browse Plans) : https://rzp.io/rzp/HgGGEvWO\nNote: After recharge bot may take upto 3 hours to update your account, please kindly have patience \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Welcome! \nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017 \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
+        await update.message.reply_text("Welcome! \nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017\n\nFor payment after free trial ends use this link (Browse Plans) : https://rzp.io/rzp/HgGGEvWO\nNote: After recharge bot may take upto 3 hours to update your account, please kindly have patience \n\nPlease log in or sign up to continue:", reply_markup=reply_markup)
     return AUTH_DECISION
 
 async def auth_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     if query.data == 'login':
-        await query.edit_message_text("Please enter your registered phone number to log in:")
+        await query.edit_message_text("Please enter your registered phone number to log in:\n\nNote : If bot freezes or doesn't respond please use /cancel and then restart the bot by /start\nHelpline 📞: 9625060017")
         return LOGIN_PHONE
     elif query.data == 'signup':
         await query.edit_message_text("Great! Let's get you signed up. What is your full name?")
