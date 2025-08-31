@@ -1,9 +1,11 @@
+import requests 
+import json
 import logging
 import os
 import datetime
 import tempfile
-import json
 import asyncio
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -25,6 +27,12 @@ from pydrive.drive import GoogleDrive
 TOKEN = os.environ.get("TOKEN")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON")
 WEBAPP_URL = os.environ.get("WEBAPP_URL")
+
+# --- NEW: Add Ultramsg Config ---
+ULTRAMSG_INSTANCE_ID = os.environ.get("ULTRAMSG_INSTANCE_ID")
+ULTRAMSG_TOKEN = os.environ.get("ULTRAMSG_TOKEN")
+ADMIN_WHATSAPP_NUMBER = os.environ.get("ADMIN_WHATSAPP_NUMBER")
+# --------------------------------
 
 SHEET_ID = "1RicQuJRGK5ZmlVZGGRZmU-mEtbYx_4kmzzsLPcgdyFE"
 DRIVE_FOLDER_ID = "14bDZ23j2jhXLWs_XxFb3xnOr-8GPlQhj"
@@ -81,6 +89,39 @@ async def is_user_blacklisted(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.clear()
         return True
     return False
+
+# ========================== NEW NOTIFICATION FUNCTION ==========================
+def send_whatsapp_notification(name: str, phone: str, user_class: str):
+    """Sends a WhatsApp notification to the admin using Ultramsg API."""
+    if not all([ULTRAMSG_INSTANCE_ID, ULTRAMSG_TOKEN, ADMIN_WHATSAPP_NUMBER]):
+        logging.warning("Ultramsg credentials not set. Skipping WhatsApp notification.")
+        return
+
+    url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat"
+    
+    # Format the message body
+    message_body = (
+        f"🎉 *New User Signup!*\n\n"
+        f"👤 *Name:* {name}\n"
+        f"📞 *Phone:* {phone}\n"
+        f"📚 *Class:* {user_class}"
+    )
+    
+    params = {
+        "token": ULTRAMSG_TOKEN,
+        "to": ADMIN_WHATSAPP_NUMBER,
+        "body": message_body,
+        "priority": 10
+    }
+    
+    headers = {'Content-type': 'application/x-www-form-urlencoded'}
+    
+    try:
+        response = requests.post(url, data=params, headers=headers)
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        logging.info(f"Successfully sent WhatsApp notification for user {name}.")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to send WhatsApp notification: {e}")
 
 # ========================== AUTHENTICATION FLOW ==========================
 
@@ -159,19 +200,42 @@ async def signup_exams_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_reply_markup(reply_markup)
     return SIGNUP_EXAMS
 
+# ========================== MODIFIED SIGNUP FUNCTION ==========================
 async def signup_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pin = update.message.text.strip()
     if not (pin.isdigit() and len(pin) == 4):
         await update.message.reply_text("Invalid PIN. Please enter a 4-digit number.")
         return SIGNUP_PIN
+        
     user_data = context.user_data
     timestamp = datetime.datetime.now().isoformat()
     exams_str = ", ".join(sorted(list(user_data['selected_exams'])))
-    new_row = [ user_data['signup_phone'], str(update.message.from_user.id), user_data['signup_name'], user_data['signup_class'], exams_str, pin, timestamp ]
-    users_sheet.append_row(new_row)
-    context.user_data.clear()
-    await update.message.reply_text("🎉 Signup successful! Please now log in to continue.")
-    return await start(update, context)
+    
+    new_user_name = user_data['signup_name']
+    new_user_phone = user_data['signup_phone']
+    new_user_class = user_data['signup_class']
+
+    new_row = [ new_user_phone, str(update.message.from_user.id), new_user_name, new_user_class, exams_str, pin, timestamp ]
+    
+    try:
+        users_sheet.append_row(new_row)
+        
+        # --- NEW: Call the notification function here ---
+        send_whatsapp_notification(
+            name=new_user_name,
+            phone=new_user_phone,
+            user_class=new_user_class
+        )
+        # ----------------------------------------------
+
+        context.user_data.clear()
+        await update.message.reply_text("🎉 Signup successful! Please now log in to continue.")
+        return await start(update, context)
+        
+    except gspread.exceptions.GSpreadException as e:
+        logging.error(f"Failed to append new user to Google Sheet: {e}")
+        await update.message.reply_text("Sorry, there was a problem saving your details. Please try signing up again.")
+        return await start(update, context)
 
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     phone = update.message.text.strip()
@@ -187,7 +251,6 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("Phone number found. Please enter your 4-digit PIN:")
         return LOGIN_PIN
     except gspread.exceptions.CellNotFound:
-        # MODIFIED: Loop back to the start menu instead of just ending the conversation.
         await update.message.reply_text("This number is not registered. Please use /start to sign up.\nHelpline 📞: 9625060017")
         return await start(update, context)
     except gspread.exceptions.GSpreadException as e:
@@ -233,11 +296,7 @@ async def handle_doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.message.from_user.id
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # ==================== NEW LINE ADDED ====================
-    # Create the WhatsApp link by adding '91' to the phone number.
     whatsapp_link = f"https://wa.me/91{phone}"
-    # ========================================================
     text_doubt = "-"
     drive_link = "-"
     if update.message.photo:
@@ -274,7 +333,7 @@ async def notify_users_on_restart(app: Application):
             try:
                 await app.bot.send_message(
                     chat_id=user_id,
-                    text="Server has been restarted. Please use  /start to continue asking doubts."
+                    text="Server has been restarted. Please use /start to continue asking doubts."
                 )
                 logging.info(f"Sent restart notification to user {user_id}")
             except Exception as e:
